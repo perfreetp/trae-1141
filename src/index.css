@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #0D1F2D;
+  color: #e2e8f0;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #0D1F2D;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #122937;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2D4E65;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00FF88;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: #1A3547;
+  border-radius: 3px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #00FF88;
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 20px rgba(0, 255, 136, 0.8);
+}
+
+@layer components {
+  .card {
+    @apply bg-base-800 border border-base-600 rounded-lg p-4 transition-all duration-300;
+  }
+
+  .card:hover {
+    @apply border-neon/30 shadow-neon/20 shadow-lg;
+  }
+
+  .card-amber {
+    @apply bg-base-800 border border-amber/30 rounded-lg p-4;
+  }
+
+  .card-coral {
+    @apply bg-base-800 border border-coral/30 rounded-lg p-4;
+  }
+
+  .btn-primary {
+    @apply bg-neon/20 text-neon border border-neon/40 rounded-lg px-4 py-2 
+    font-display font-semibold tracking-wide
+    hover:bg-neon/30 hover:shadow-neon transition-all duration-200
+    active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-base-700 text-slate-300 border border-base-500 rounded-lg px-4 py-2
+    font-display font-semibold tracking-wide
+    hover:bg-base-600 hover:text-white transition-all duration-200
+    active:scale-95;
+  }
+
+  .btn-danger {
+    @apply bg-coral/20 text-coral border border-coral/40 rounded-lg px-4 py-2
+    font-display font-semibold tracking-wide
+    hover:bg-coral/30 hover:shadow-coral transition-all duration-200
+    active:scale-95;
+  }
+
+  .btn-amber {
+    @apply bg-amber/20 text-amber border border-amber/40 rounded-lg px-4 py-2
+    font-display font-semibold tracking-wide
+    hover:bg-amber/30 hover:shadow-amber transition-all duration-200
+    active:scale-95;
+  }
+
+  .stat-value {
+    @apply font-display font-bold text-2xl md:text-3xl tracking-tight;
+  }
+
+  .stat-label {
+    @apply text-slate-400 text-xs font-body uppercase tracking-widest;
+  }
+
+  .section-title {
+    @apply font-display font-bold text-xl md:text-2xl text-white tracking-wide;
+  }
+
+  .glow-text {
+    text-shadow: 0 0 10px rgba(0, 255, 136, 0.5), 0 0 20px rgba(0, 255, 136, 0.3);
+  }
+
+  .progress-bar {
+    @apply h-2 rounded-full bg-base-700 overflow-hidden;
+  }
+
+  .progress-bar-fill {
+    @apply h-full rounded-full transition-all duration-500 ease-out;
+  }
+}
