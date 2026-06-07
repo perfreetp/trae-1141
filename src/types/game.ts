@@ -32,7 +32,7 @@ export interface BatteryBatch {
   stationId: string
   cityName: string
   quantity: number
-  status: 'pending' | 'inspecting' | 'graded'
+  status: 'pending' | 'inspecting' | 'graded' | 'dismantling'
   grade?: 'cascade' | 'dismantle'
   inspectionLineId?: string
   cascadeYield?: number
@@ -87,6 +87,8 @@ export interface GameEvent {
   resolution?: string
   severity: 'low' | 'medium' | 'high'
   quarter: number
+  targetOrderId?: string
+  targetClientName?: string
 }
 
 export interface Finance {

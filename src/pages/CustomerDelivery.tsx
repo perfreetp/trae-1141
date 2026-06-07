@@ -47,7 +47,7 @@ const MATERIAL_TO_INVENTORY_KEY: Record<Order['material'], 'nickel' | 'cobalt' |
 }
 
 function OrderCard({ order }: { order: Order }) {
-  const { inventory, quarter, allocateMaterialToOrder, deliverOrder, setOrderTransport } = useGameStore()
+  const { inventory, quarter, events, allocateMaterialToOrder, deliverOrder, setOrderTransport } = useGameStore()
   const [allocating, setAllocating] = useState(false)
   const [allocQty, setAllocQty] = useState(0)
 
@@ -55,6 +55,9 @@ function OrderCard({ order }: { order: Order }) {
   const available = inventory[materialKey]
   const maxAllocatable = Math.min(available, order.remainingQuantity - order.allocatedQuantity)
   const canDeliver = order.allocatedQuantity >= order.remainingQuantity
+
+  const hasTransportDisruption = events.some(e => e.type === 'transport_disruption' && !e.resolved)
+  const urgencyEvents = events.filter(e => e.type === 'customer_urgency' && !e.resolved && e.targetOrderId === order.id)
 
   const handleAllocate = () => {
     if (allocQty <= 0 || allocQty > maxAllocatable) return
@@ -143,6 +146,20 @@ function OrderCard({ order }: { order: Order }) {
 
       {order.status !== 'overdue' && order.status !== 'completed' && (
         <>
+          {hasTransportDisruption && (
+            <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-amber/10 border border-amber/30">
+              <AlertTriangle className="w-4 h-4 text-amber shrink-0" />
+              <span className="text-xs text-amber font-body">运输受阻！运费已上涨，切换运输方式可查看变化</span>
+            </div>
+          )}
+
+          {urgencyEvents.length > 0 && (
+            <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-coral/10 border border-coral/30">
+              <AlertTriangle className="w-4 h-4 text-coral shrink-0" />
+              <span className="text-xs text-coral font-body">客户催单！截止提前、违约金增加</span>
+            </div>
+          )}
+
           <div className="mb-3">
             <div className="text-xs text-slate-400 font-body mb-1.5 flex items-center gap-1">
               <Truck className="w-3.5 h-3.5" />

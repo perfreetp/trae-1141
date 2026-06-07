@@ -22,6 +22,13 @@ const CITIES_DATA: Omit<City, 'stations'>[] = [
 const CLIENT_NAMES = ['国轩储能', '宁德能源', '比亚迪储能', '华为数字能源', '远景储能', '阳光电源', '亿纬锂能', '中创新航', '蜂巢能源', '欣旺达']
 const CLIENT_TYPES: Order['clientType'][] = ['储能厂', '电动车厂', '材料商', '电网公司']
 
+const MATERIAL_TO_INVENTORY_KEY: Record<string, 'nickel' | 'cobalt' | 'lithium' | 'cascadeBattery'> = {
+  nickel: 'nickel',
+  cobalt: 'cobalt',
+  lithium: 'lithium',
+  cascade_battery: 'cascadeBattery',
+}
+
 function makeId(): string {
   return Math.random().toString(36).substring(2, 10)
 }
@@ -54,7 +61,7 @@ function createProductionLines(): ProductionLine[] {
   ]
 }
 
-function generateEvents(quarter: number): GameEvent[] {
+function generateEvents(quarter: number, orders: Order[]): GameEvent[] {
   const events: GameEvent[] = []
   const eventTemplates = [
     {
@@ -81,15 +88,8 @@ function generateEvents(quarter: number): GameEvent[] {
     {
       type: 'transport_disruption' as const,
       title: '暴雨影响运输',
-      description: '华南地区暴雨导致公路运输受限，运费上涨20%',
+      description: '华南地区暴雨导致公路运输受限，运费上涨20%，运力下降30%',
       impact: { transportCost: 1.2, transportCapacity: 0.7 },
-      severity: 'medium' as const,
-    },
-    {
-      type: 'customer_urgency' as const,
-      title: '客户紧急催单',
-      description: '国轩储能要求提前两周交付，否则将违约',
-      impact: { urgency: 2 },
       severity: 'medium' as const,
     },
     {
@@ -109,7 +109,7 @@ function generateEvents(quarter: number): GameEvent[] {
     {
       type: 'transport_disruption' as const,
       title: '铁路检修',
-      description: '华中铁路线路检修，该区域运输延迟一周',
+      description: '华中铁路线路检修，运费上涨15%，运力下降20%',
       impact: { transportCost: 1.15, transportCapacity: 0.8 },
       severity: 'low' as const,
     },
@@ -130,6 +130,24 @@ function generateEvents(quarter: number): GameEvent[] {
       quarter,
     })
   }
+
+  const activeOrders = orders.filter(o => o.status === 'pending' || o.status === 'producing')
+  if (activeOrders.length > 0 && Math.random() < 0.4) {
+    const targetOrder = activeOrders[Math.floor(Math.random() * activeOrders.length)]
+    events.push({
+      id: makeId(),
+      type: 'customer_urgency',
+      title: '客户紧急催单',
+      description: `${targetOrder.clientName}要求提前交付${targetOrder.materialName}订单，否则将加收违约金`,
+      impact: { urgency: 2, penaltyMultiplier: 1.5 },
+      resolved: false,
+      severity: 'medium',
+      quarter,
+      targetOrderId: targetOrder.id,
+      targetClientName: targetOrder.clientName,
+    })
+  }
+
   return events
 }
 
@@ -219,7 +237,7 @@ function getInitialState(): GameState {
     gameOver: false,
     cities,
     orders: generateOrders(1, []),
-    events: generateEvents(1),
+    events: [],
     finance: {
       cash: 500000,
       revenue: 0,
@@ -288,7 +306,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   ...getInitialState(),
 
   startGame: () => {
-    set({ started: true, phase: 'decision', notifications: [] })
+    const state = get()
+    const events = generateEvents(1, state.orders)
+    set({ started: true, phase: 'decision', events, notifications: [] })
     get().addNotification('info', '欢迎经营绿能回生！第1季度开始，请做出你的经营决策。')
   },
 
@@ -520,7 +540,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       }
       if (targetBatch) break
     }
-    if (!targetBatch || targetBatch.grade !== 'dismantle') return
+    if (!targetBatch || targetBatch.grade !== 'dismantle' || targetBatch.status !== 'graded') return
     if (targetBatch.quantity > line.capacity - line.usedCapacity) {
       get().addNotification('warning', '拆解线容量不足！')
       return
@@ -531,6 +551,21 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
           ? { ...l, status: 'dismantling' as const, usedCapacity: l.usedCapacity + targetBatch!.quantity, assignedBatchId: batchId, progress: 0 }
           : l
       ),
+      cities: state.cities.map(c => {
+        if (c.id !== targetCityId) return c
+        return {
+          ...c,
+          stations: c.stations.map(s => {
+            if (s.id !== targetStationId) return s
+            return {
+              ...s,
+              batches: s.batches.map(b =>
+                b.id === batchId ? { ...b, status: 'dismantling' as const } : b
+              ),
+            }
+          }),
+        }
+      }),
     })
   },
 
@@ -563,20 +598,18 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const lithiumGained = dy.lithium * Math.ceil(batchQty / 10)
     const carbonFromDismantling = Math.floor(batchQty * 1.5)
 
-    const newInventory = {
-      ...state.inventory,
-      nickel: state.inventory.nickel + nickelGained,
-      cobalt: state.inventory.cobalt + cobaltGained,
-      lithium: state.inventory.lithium + lithiumGained,
-    }
-
     set({
       productionLines: state.productionLines.map(l =>
         l.id === lineId
           ? { ...l, status: 'idle' as const, usedCapacity: 0, assignedBatchId: undefined, progress: 0 }
           : l
       ),
-      inventory: newInventory,
+      inventory: {
+        ...state.inventory,
+        nickel: state.inventory.nickel + nickelGained,
+        cobalt: state.inventory.cobalt + cobaltGained,
+        lithium: state.inventory.lithium + lithiumGained,
+      },
       carbonMetrics: {
         ...state.carbonMetrics,
         quarterlyReduction: state.carbonMetrics.quarterlyReduction + carbonFromDismantling,
@@ -605,27 +638,26 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const order = state.orders.find(o => o.id === orderId)
     if (!order) return
 
-    const matKey = material as 'nickel' | 'cobalt' | 'lithium' | 'cascadeBattery'
+    const matKey = MATERIAL_TO_INVENTORY_KEY[material]
+    if (!matKey) return
     const available = state.inventory[matKey]
     if (available < quantity) {
-      get().addNotification('warning', `${material}库存不足！`)
+      get().addNotification('warning', `库存不足！当前${matKey === 'cascadeBattery' ? '梯次电池' : material}仅剩${available}`)
       return
     }
 
-    const newInventory = {
-      ...state.inventory,
-      [matKey]: (state.inventory[matKey] as number) - quantity,
-    }
-
     set({
-      inventory: newInventory,
+      inventory: {
+        ...state.inventory,
+        [matKey]: (state.inventory[matKey] as number) - quantity,
+      },
       orders: state.orders.map(o =>
         o.id === orderId
           ? { ...o, allocatedQuantity: o.allocatedQuantity + quantity, status: 'producing' as const }
           : o
       ),
     })
-    get().addNotification('info', `已为订单分配${quantity}单位${material}`)
+    get().addNotification('info', `已为订单分配${quantity}单位${order.materialName}`)
   },
 
   deliverOrder: (orderId: string) => {
@@ -637,6 +669,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return
     }
     const transportCost = order.transportCost
+    const carbonFromDelivery = Math.floor(order.quantity * 0.8)
+    const carbonFromTransport = Math.floor(order.quantity * 0.2)
+
     set({
       orders: state.orders.map(o =>
         o.id === orderId ? { ...o, status: 'completed' as const } : o
@@ -651,11 +686,12 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       },
       carbonMetrics: {
         ...state.carbonMetrics,
-        quarterlyReduction: state.carbonMetrics.quarterlyReduction + Math.floor(order.quantity * 0.8),
-        totalReduction: state.carbonMetrics.totalReduction + Math.floor(order.quantity * 0.8),
+        quarterlyReduction: state.carbonMetrics.quarterlyReduction + carbonFromDelivery + carbonFromTransport,
+        totalReduction: state.carbonMetrics.totalReduction + carbonFromDelivery + carbonFromTransport,
         breakdown: {
           ...state.carbonMetrics.breakdown,
-          transport: state.carbonMetrics.breakdown.transport + Math.floor(order.quantity * 0.2),
+          transport: state.carbonMetrics.breakdown.transport + carbonFromTransport,
+          recycling: state.carbonMetrics.breakdown.recycling + carbonFromDelivery,
         },
       },
     })
@@ -667,10 +703,19 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     const multipliers = { road: 1, rail: 0.7, express: 1.8 }
     const order = state.orders.find(o => o.id === orderId)
     if (!order) return
+
+    let baseCost = Math.floor(order.quantity * 5 * multipliers[method])
+
+    const transportEvents = state.events.filter(e => e.type === 'transport_disruption' && !e.resolved)
+    if (transportEvents.length > 0) {
+      const costMultiplier = transportEvents.reduce((acc, e) => acc * (e.impact.transportCost || 1), 1)
+      baseCost = Math.floor(baseCost * costMultiplier)
+    }
+
     set({
       orders: state.orders.map(o =>
         o.id === orderId
-          ? { ...o, transportMethod: method, transportCost: Math.floor(order.quantity * 5 * multipliers[method]) }
+          ? { ...o, transportMethod: method, transportCost: baseCost }
           : o
       ),
     })
@@ -687,7 +732,6 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     set({
       inventory: {
         ...state.inventory,
-        [material]: (state.inventory[material] as number) + quantity,
         purchaseOrders: [
           ...state.inventory.purchaseOrders,
           { id: makeId(), material, quantity, price, deliveryQuarter: state.quarter + 1 },
@@ -711,58 +755,111 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     let newCarbon = { ...state.carbonMetrics }
     let newInventory = { ...state.inventory }
     let newReputation = { ...state.reputation }
+    let newOrders = [...state.orders]
+    let newCities = state.cities.map(c => ({ ...c }))
 
-    if (resolution === 'pay') {
-      const fine = event.type === 'pollution_warning' ? 30000 : 15000
-      newFinance = { ...newFinance, cash: newFinance.cash - fine, cost: newFinance.cost + fine }
-      newReputation = { ...newReputation, score: Math.max(0, newReputation.score - 3) }
-    } else if (resolution === 'fix') {
-      const cost = 20000
-      newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
-      newCarbon = { ...newCarbon, complianceScore: Math.min(100, newCarbon.complianceScore + 5) }
-      newReputation = { ...newReputation, score: Math.min(100, newReputation.score + 2) }
-    } else if (resolution === 'accept') {
-      if (event.impact.lithiumPrice) {
-        newInventory = {
-          ...newInventory,
-          marketPrices: {
-            ...newInventory.marketPrices,
-            lithium: Math.floor(newInventory.marketPrices.lithium * event.impact.lithiumPrice),
-          },
-        }
-      }
-      if (event.impact.cobaltPrice) {
-        newInventory = {
-          ...newInventory,
-          marketPrices: {
-            ...newInventory.marketPrices,
-            cobalt: Math.floor(newInventory.marketPrices.cobalt * event.impact.cobaltPrice),
-          },
-        }
-      }
-      if (event.impact.nickelPrice) {
-        newInventory = {
-          ...newInventory,
-          marketPrices: {
-            ...newInventory.marketPrices,
-            nickel: Math.floor(newInventory.marketPrices.nickel * event.impact.nickelPrice),
-          },
-        }
-      }
-      if (event.impact.transportCost) {
-        set({
-          cities: state.cities.map(c => ({
-            ...c,
-            transportCost: Math.floor(c.transportCost * (event.impact.transportCost || 1)),
-            transportCapacity: Math.floor(c.transportCapacity * (event.impact.transportCapacity || 1)),
-          })),
+    if (event.type === 'transport_disruption') {
+      if (resolution === 'accept') {
+        const costMult = event.impact.transportCost || 1
+        const capMult = event.impact.transportCapacity || 1
+        newCities = newCities.map(c => ({
+          ...c,
+          transportCost: Math.floor(c.transportCost * costMult),
+          transportCapacity: Math.floor(c.transportCapacity * capMult),
+          transportDisrupted: true,
+        }))
+        newOrders = newOrders.map(o => {
+          if (o.status === 'pending' || o.status === 'producing') {
+            return { ...o, transportCost: Math.floor(o.transportCost * costMult) }
+          }
+          return o
         })
+      } else if (resolution === 'pay') {
+        const cost = 15000
+        newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
+        newReputation = { ...newReputation, score: Math.max(0, newReputation.score - 2) }
+      } else if (resolution === 'fix') {
+        const cost = 25000
+        newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
+        newReputation = { ...newReputation, score: Math.min(100, newReputation.score + 3) }
       }
-      if (event.impact.complianceScore) {
-        newCarbon = { ...newCarbon, complianceScore: Math.max(0, newCarbon.complianceScore + event.impact.complianceScore) }
+    } else if (event.type === 'customer_urgency') {
+      if (resolution === 'accept') {
+        const targetId = event.targetOrderId
+        if (targetId) {
+          newOrders = newOrders.map(o => {
+            if (o.id === targetId) {
+              return {
+                ...o,
+                urgency: Math.min(5, o.urgency + 2),
+                penalty: Math.floor(o.penalty * 1.5),
+                deadline: Math.max(state.quarter, o.deadline - 1),
+              }
+            }
+            return o
+          })
+        }
+      } else if (resolution === 'pay') {
+        const cost = 20000
+        newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
+      } else if (resolution === 'fix') {
+        const cost = 30000
+        newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
+        newReputation = { ...newReputation, score: Math.min(100, newReputation.score + 2) }
       }
-      if (event.impact.pollutionIncidents) {
-        newCarbon = { ...newCarbon, pollutionIncidents: newCarbon.pollutionIncidents + (event.impact.pollutionIncidents || 1) }
+    } else if (event.type === 'pollution_warning') {
+      if (resolution === 'pay') {
+        const fine = 30000
+        newFinance = { ...newFinance, cash: newFinance.cash - fine, cost: newFinance.cost + fine }
+        newReputation = { ...newReputation, score: Math.max(0, newReputation.score - 3) }
+      } else if (resolution === 'fix') {
+        const cost = 20000
+        newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
+        newCarbon = { ...newCarbon, complianceScore: Math.min(100, newCarbon.complianceScore + 5) }
+        newReputation = { ...newReputation, score: Math.min(100, newReputation.score + 2) }
+      } else if (resolution === 'accept') {
+        if (event.impact.complianceScore) {
+          newCarbon = { ...newCarbon, complianceScore: Math.max(0, newCarbon.complianceScore + event.impact.complianceScore) }
+        }
+        if (event.impact.pollutionIncidents) {
+          newCarbon = { ...newCarbon, pollutionIncidents: newCarbon.pollutionIncidents + (event.impact.pollutionIncidents || 1) }
+        }
+      }
+    } else if (event.type === 'price_fluctuation') {
+      if (resolution === 'accept') {
+        if (event.impact.lithiumPrice) {
+          newInventory = {
+            ...newInventory,
+            marketPrices: {
+              ...newInventory.marketPrices,
+              lithium: Math.floor(newInventory.marketPrices.lithium * event.impact.lithiumPrice),
+            },
+          }
+        }
+        if (event.impact.cobaltPrice) {
+          newInventory = {
+            ...newInventory,
+            marketPrices: {
+              ...newInventory.marketPrices,
+              cobalt: Math.floor(newInventory.marketPrices.cobalt * event.impact.cobaltPrice),
+            },
+          }
+        }
+        if (event.impact.nickelPrice) {
+          newInventory = {
+            ...newInventory,
+            marketPrices: {
+              ...newInventory.marketPrices,
+              nickel: Math.floor(newInventory.marketPrices.nickel * event.impact.nickelPrice),
+            },
+          }
+        }
+      } else if (resolution === 'pay') {
+        const cost = 15000
+        newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
+      } else if (resolution === 'fix') {
+        const cost = 10000
+        newFinance = { ...newFinance, cash: newFinance.cash - cost, cost: newFinance.cost + cost }
       }
     }
 
@@ -772,6 +869,8 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       carbonMetrics: newCarbon,
       inventory: newInventory,
       reputation: newReputation,
+      orders: newOrders,
+      cities: newCities,
     })
   },
 
@@ -790,26 +889,28 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
   settleQuarter: () => {
     const state = get()
-    let newFinance = { ...state.finance }
-    let newOrders = [...state.orders]
-    let newReputation = { ...state.reputation }
-    let newCarbon = { ...state.carbonMetrics }
+
+    let quarterlyCarbonFromDismantling = state.carbonMetrics.breakdown.dismantling
+    let quarterlyCarbonFromTransport = state.carbonMetrics.breakdown.transport
+    let quarterlyCarbonFromRecycling = state.carbonMetrics.breakdown.recycling
+    let quarterlyCarbonFromCascade = 0
+    let totalQuarterlyReduction = state.carbonMetrics.quarterlyReduction
 
     const recyclingCost = state.cities.reduce((acc, city) => {
       return acc + city.stations.reduce((sAcc, station) => sAcc + (station.subsidyPrice * station.predictedVolume), 0)
     }, 0)
 
     const operationalCost = 15000 + state.cities.filter(c => c.unlocked).length * 5000
-    newFinance = {
-      ...newFinance,
-      cost: newFinance.cost + recyclingCost + operationalCost,
-      cash: newFinance.cash - recyclingCost - operationalCost,
-      totalCost: newFinance.totalCost + recyclingCost + operationalCost,
-    }
 
-    state.cities.forEach(city => {
-      city.stations.forEach(station => {
+    let newCash = state.finance.cash - recyclingCost - operationalCost
+    let newCost = state.finance.cost + recyclingCost + operationalCost
+    let newTotalCost = state.finance.totalCost + recyclingCost + operationalCost
+
+    const newCities = state.cities.map(city => {
+      const newCity = { ...city, stations: city.stations.map(s => ({ ...s, batches: [...s.batches] })) }
+      newCity.stations.forEach(station => {
         const actualVol = station.predictedVolume + Math.floor((Math.random() - 0.5) * 20)
+        station.actualVolume = actualVol
         const numBatches = Math.max(1, Math.floor(actualVol / 25))
         for (let i = 0; i < numBatches; i++) {
           const batch: BatteryBatch = {
@@ -819,51 +920,29 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
             quantity: Math.floor(actualVol / numBatches),
             status: 'pending',
           }
-          const cityIdx = state.cities.indexOf(city)
-          const stationIdx = city.stations.indexOf(station)
-          const cities = get().cities
-          cities[cityIdx] = {
-            ...cities[cityIdx],
-            stations: cities[cityIdx].stations.map((s, si) =>
-              si === stationIdx ? { ...s, batches: [...s.batches, batch], actualVolume: actualVol } : s
-            ),
-          }
-          set({ cities: [...cities] })
+          station.batches.push(batch)
         }
       })
+      return newCity
     })
 
-    const cascadeBatches: BatteryBatch[] = []
-    state.cities.forEach(city => {
+    let cascadeBatteryGained = 0
+    newCities.forEach(city => {
       city.stations.forEach(station => {
-        station.batches.forEach(batch => {
+        station.batches = station.batches.filter(batch => {
           if (batch.status === 'graded' && batch.grade === 'cascade') {
-            cascadeBatches.push(batch)
+            cascadeBatteryGained += (batch.cascadeYield || 0)
+            quarterlyCarbonFromCascade += (batch.cascadeYield || 0) * 2
+            return false
           }
+          return true
         })
       })
     })
 
-    const cascadeBatteryGained = cascadeBatches.reduce((acc, b) => acc + (b.cascadeYield || 0), 0)
-    if (cascadeBatteryGained > 0) {
-      set({
-        inventory: {
-          ...get().inventory,
-          cascadeBattery: get().inventory.cascadeBattery + cascadeBatteryGained,
-        },
-        carbonMetrics: {
-          ...get().carbonMetrics,
-          quarterlyReduction: get().carbonMetrics.quarterlyReduction + cascadeBatteryGained * 2,
-          totalReduction: get().carbonMetrics.totalReduction + cascadeBatteryGained * 2,
-          breakdown: {
-            ...get().carbonMetrics.breakdown,
-            cascade: get().carbonMetrics.breakdown.cascade + cascadeBatteryGained * 2,
-          },
-        },
-      })
-    }
+    totalQuarterlyReduction += quarterlyCarbonFromCascade
 
-    newOrders = newOrders.map(o => {
+    let newOrders = state.orders.map(o => {
       if (o.status === 'pending' || o.status === 'producing') {
         if (o.deadline <= state.quarter) {
           return { ...o, status: 'overdue' as const }
@@ -872,44 +951,36 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       return o
     })
 
-    const overdueCount = newOrders.filter(o => o.status === 'overdue').length
-    if (overdueCount > 0) {
-      const penalty = newOrders.filter(o => o.status === 'overdue').reduce((acc, o) => acc + o.penalty, 0)
-      newFinance = { ...newFinance, cash: newFinance.cash - penalty, cost: newFinance.cost + penalty, totalCost: newFinance.totalCost + penalty }
+    const overdueOrders = newOrders.filter(o => o.status === 'overdue')
+    let totalPenalty = 0
+    if (overdueOrders.length > 0) {
+      totalPenalty = overdueOrders.reduce((acc, o) => acc + o.penalty, 0)
+      newCash -= totalPenalty
+      newCost += totalPenalty
+      newTotalCost += totalPenalty
     }
 
     const deliveryRate = computeDeliveryRate(newOrders)
-    const invRisk = computeInventoryRisk(get().inventory)
-    const financialScore = Math.min(100, Math.max(0, 50 + Math.floor(newFinance.profit / 10000)))
+    const newInventory = { ...state.inventory, cascadeBattery: state.inventory.cascadeBattery + cascadeBatteryGained }
+    const invRisk = computeInventoryRisk(newInventory)
+    const financialScore = Math.min(100, Math.max(0, 50 + Math.floor((state.finance.revenue - newCost) / 10000)))
     const customerScore = Math.min(100, deliveryRate)
-    const envScore = Math.min(100, newCarbon.complianceScore - newCarbon.pollutionIncidents * 10)
+    const envScore = Math.min(100, Math.max(0, state.carbonMetrics.complianceScore - state.carbonMetrics.pollutionIncidents * 10))
     const opScore = Math.min(100, 100 - invRisk)
     const totalScore = Math.floor(financialScore * 0.3 + customerScore * 0.25 + envScore * 0.25 + opScore * 0.2)
 
-    newReputation = {
-      level: computeReputationLevel(totalScore),
-      score: totalScore,
-      deliveryRate,
-      customerSatisfaction: customerScore,
-      environmentalScore: envScore,
-    }
-
-    newFinance = {
-      ...newFinance,
-      profit: newFinance.revenue - newFinance.cost,
-      cashFlow: [...newFinance.cashFlow, newFinance.cash],
-    }
+    const newProfit = state.finance.revenue - newCost
 
     const historyEntry: QuarterHistory = {
       quarter: state.quarter,
-      cash: newFinance.cash,
-      revenue: newFinance.revenue,
-      cost: newFinance.cost,
-      profit: newFinance.profit,
-      carbonReduction: newCarbon.quarterlyReduction,
+      cash: newCash,
+      revenue: state.finance.revenue,
+      cost: newCost,
+      profit: newProfit,
+      carbonReduction: totalQuarterlyReduction,
       deliveryRate,
       reputationScore: totalScore,
-      complianceScore: newCarbon.complianceScore,
+      complianceScore: state.carbonMetrics.complianceScore,
       inventoryRisk: invRisk,
       financialScore,
       operationScore: opScore,
@@ -918,11 +989,27 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     }
 
     set({
+      cities: newCities,
       orders: newOrders,
-      finance: newFinance,
-      reputation: newReputation,
+      inventory: newInventory,
+      finance: {
+        ...state.finance,
+        cash: newCash,
+        cost: newCost,
+        profit: newProfit,
+        totalCost: newTotalCost,
+        cashFlow: [...state.finance.cashFlow, newCash],
+      },
+      reputation: {
+        level: computeReputationLevel(totalScore),
+        score: totalScore,
+        deliveryRate,
+        customerSatisfaction: customerScore,
+        environmentalScore: envScore,
+      },
       carbonMetrics: {
-        ...newCarbon,
+        ...state.carbonMetrics,
+        totalReduction: state.carbonMetrics.totalReduction + quarterlyCarbonFromCascade,
         quarterlyReduction: 0,
         breakdown: { recycling: 0, cascade: 0, dismantling: 0, transport: 0 },
       },
@@ -940,14 +1027,21 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
 
     const newQuarter = state.quarter + 1
     const pendingOrders = state.orders.filter(o => o.status === 'pending' || o.status === 'producing')
-    const deliveredPurchaseOrders = state.inventory.purchaseOrders.filter(po => po.deliveryQuarter <= newQuarter)
+    const arrivingOrders = state.inventory.purchaseOrders.filter(po => po.deliveryQuarter <= newQuarter)
     let inventoryBonus = { nickel: 0, cobalt: 0, lithium: 0 }
-    deliveredPurchaseOrders.forEach(po => {
+    arrivingOrders.forEach(po => {
       inventoryBonus[po.material] += po.quantity
     })
 
-    const newEvents = generateEvents(newQuarter)
+    const newEvents = generateEvents(newQuarter, pendingOrders)
     const newOrders = generateOrders(newQuarter, pendingOrders)
+
+    const restoredCities = state.cities.map(c => ({
+      ...c,
+      transportDisrupted: false,
+      transportCost: CITIES_DATA.find(cd => cd.id === c.id)?.transportCost ?? c.transportCost,
+      transportCapacity: CITIES_DATA.find(cd => cd.id === c.id)?.transportCapacity ?? c.transportCapacity,
+    }))
 
     set({
       quarter: newQuarter,
@@ -955,6 +1049,7 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       currentStep: 0,
       events: newEvents,
       orders: newOrders,
+      cities: restoredCities,
       finance: {
         ...state.finance,
         revenue: 0,
